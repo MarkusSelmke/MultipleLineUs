@@ -19,7 +19,7 @@ Keyboard Controls:
 Up / Down / Left / Right	: move A/E/F points (edit mode)
 Ctrl + Left / Right		    : inc./dec. step size
 
-+ / -					            : go through configurations
+'+' / '-'					        : go through configurations
 Ctrl + '1'-'4'			      : select configuration 1, 2, 3, 4
 'S'					              : save as current configuration
 'I'					              : initial / default configuration (no collision check!)
