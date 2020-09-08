@@ -13,16 +13,27 @@ Keyboard Controls:
 'C' + '1'-'4'			        : connect to Line-Us device 1, 2, 3, 4
 
 '1'-'4'				            : select device 1, 2, 3, 4
+
 'E'					              : edit-mode for E points
+
 'F'					              : edit-mode for F points
+
 'A'					              : edit-mode for A points
+
 Up / Down / Left / Right	: move A/E/F points (edit mode)
+
 Ctrl + Left / Right		    : inc./dec. step size
 
 '+' / '-'					        : go through configurations
+
 Ctrl + '1'-'4'			      : select configuration 1, 2, 3, 4
+
 'S'					              : save as current configuration
+
 'I'					              : initial / default configuration (no collision check!)
+
 Enter				              : start/cancel move to configuration
+
 Ctrl + Up / Down		      : inc./dec. movement step size 
+
 'O'					              : home position (no collision check!)
