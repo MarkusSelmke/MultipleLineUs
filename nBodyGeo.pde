@@ -3,8 +3,6 @@
   
   Digital Twin of a 4 devices Line-Us Setup (Markus Selmke, markus.selmke@gmx.de)
   Includes keyboard interface (hit 'h' for help) and collisions detection by a bounding box method (rectangles) 
-  //to be done: use http://interfascia.berg.industries
-  //svg plotter: https://github.com/tbertz/LineUs_SVG/tree/release/v0.2
   
   -----------------------------------------------------------------------------------------------
   
@@ -21,24 +19,23 @@
   https://github.com/Line-us/Line-us-Programming/blob/master/README.md#getting-started-with-line-us-programming
   x in 650 ... 1775, y in -1000, ..., 1000, z in 0 (down), ..., 1000 (up), home: (1000, 1000, 1000) (rectangular configuration and pen up)
      
-  GCode commands:
+  (new) GCode commands:
   https://github.com/Line-us/Line-us-Programming/blob/master/Documentation/GCodeSpec.md
-  "M114 S" -> ok S:135.00 E:45.00 P:135.00
+  retrieve servo angles E, S & P: "M114 S" -> ok S:135.00 E:45.00 P:135.00
   
   -----------------------------------------------------------------------------------------------
 */
 
 import processing.net.*;
-
-//helper screen image & display toggle variable 
-PImage img_help;
-boolean HelpActive = false;
+ 
+PImage img_help;                               //helper screen image
+boolean HelpActive = false;                    //helper screen toggle variable
 
 boolean keyCONTROL = false;                    //boolean variable signifying whether CNTRL is pressed or not.
 boolean keyC = false;                          //boolean variable signifying if key 'c' is currently pressed.
 boolean keyT = false;                          //boolean variable signifying whether 't' is pressed or not.
 
-//define instances from class "LineUs" defined below (W-LAN interface to 4 devices. Connect via key 'c')
+//define array from class "LineUs" defined below (W-LAN interface to 4 devices. Connect via key 'c')
 LineUs[] LineUsDevice = new LineUs[4];                     //create 4 instances of Line-Us devices (Rob's interface class) 
 boolean[] LineUsConnected = {false, false, false, false};  //boolean variables signifying if LineUs Devices are connected
 
@@ -49,13 +46,15 @@ PVector[] LineUsPositions = new PVector[4];    //positions of the Line-Us Device
 PVector[] LineUsEs = new PVector[4];           //positions of the Line-Us Devices (4 devices, 4 vectors E)
 PVector[] LineUsFs = new PVector[4];           //positions of the Line-Us Devices (4 devices, 4 vectors F)
 PVector[] LineUsELastValid = new PVector[4];   //stored last valid E positions (4 devices, 4 vectors E)
-PVector zVec = new PVector(0, 0, 1);           //used for vector maths, i.e. cross-products to find normals
-float[] wi = {10, 10, 10, 10, 5, 22.5};        //half width of bounding boxes around joint-connection-vectors
+PVector zVec = new PVector(0, 0, 1);           //used for vector maths, e.g. cross-products to find normals
+float[] wi = {10, 10, 10, 10, 5, 22.5, 22, 10};//half width of bounding boxes around joint-connection-vectors
+int[] bbv = {4, 4, 4, 4, 4, 6, 4, 6};          //# of vertices per bounding box
+boolean ToggleBBCD = true;                     //bounding box collision detection                      
 float scale = 2;                               //scale used for plotting. i.e. [px] = [mm]*scale
-float a=50;                                    //arm length a [mm] (longer one)
+float a=50.0;                                  //arm length a [mm] (longer one)
 float b=32.5;                                  //arm length b [mm] (shorter one)
-float e=30;                                    //arm length e [mm] (extension rod)
-float gamma=0*PI/4;                            //extension arm mounting angle relative to pen-arm (0 = straight extension)
+float e=40.0;                                  //arm length e [mm] (extension rod)
+float gamma=0*PI/4;                            //extension arm mounting angle relative to pen-arm (0 = straight extension) -> point F
 float LineUsLength=96;                         //Line-Us device length [mm]
 float LineUsWidth=25;                          //Line-Us device length [mm]
 float PondSize=200;                            //operating area size [mm]
@@ -66,10 +65,10 @@ float dx=0.1;                                  //size of fine-movements (arrow k
 float CircRadius = 10;                         //radius of draggable disc [px]
 float JointRadius = 5;                         //radius of displayed Line-Us joints [px]
 color BBDefaulColor = color(100, 100);         //(default) color of bounding boxes (no collision)
-color BBIntersectColor = color(255,0,0, 100);  //color of boundin boxes when collision is detected
-color ActiveEColor = color(255,255,0, 150);    //color of E disc which is active (depends on dragging mode)
-color DefaultEColor = color(100, 150);         //default color of E disc (not active)
-color FColor = color(255, 255, 0);             //default color of F
+color BBIntersectColor = color(255,0,0, 100);  //color of bounding boxes when collision is detected
+color ActiveEColor = color(255,255,0, 150);    //color of dragging disc which is active (depends on dragging mode)
+color DefaultEColor = color(0,0,255, 50);      //default color of dragging discs (i.e. when not active)
+color FColor = color(255, 255, 0);             //color of extension arm points F (to be controlled)
 PFont myFont;                                  //default font, also in table
 PFont myFontBold;                              //font for table headers
 int ActiveLineUs = 0;                          //default / intially active LineUs
@@ -78,7 +77,8 @@ int DragMode = 0;                              //drag mode: 0: drag pen holder p
 Table PosTable;                                //table for importing and storing F vectors
 boolean FileLoaded = false;                    //boolean variable storing if file has been loaded or not
 int ConfID = 0;                                //index of active table row, i.e. current configuration if table is loaded
-float scalePreview = 0.1;                      //tbd: small preview of configuration
+float ConfPreviewScale = 0.25;                 //scale of the small preview of the read-in tables of configurations for the F's
+float ConfScale = 1.0;                         //scale factor for configurations
 boolean GoToActive = false;                    //boolean variable signifying state of moving towards target F
 PVector[] FStart = new PVector[4];             //array of vectors holding the start positions for a given movement of F's
 PVector[] FToTargetF = new PVector[4];         //array of vectors holding the directions to target F for a given movement
@@ -93,9 +93,12 @@ float dnzi = 0.05;                             //z-step-size in sin() for tippin
 float ziAmp = 400;                             //z-Amplitude of tipping, must be <1000
 
 void setup() {
-  size(1000,600); //variables width, height;
-  img_help = loadImage("Help.png");
+  size(1200,600);                              //set size of canvas, variables width, height;
+  frameRate(25);
+
+  img_help = loadImage("Help.png");            //load helper screen image
   
+  //set digital twin drawing area center, i.e. global common coordinate center
   SetupCenter.x = height/2;
   SetupCenter.y = height/2;
   
@@ -109,8 +112,8 @@ void setup() {
     println(PosTable.getColumnCount() + " total columns in table (should be 8, 2 coords x,y per 1 out of 4 devices)");
   }
   
-  myFont =createFont("Arial", 10, true);
-  myFontBold = createFont("Arial Bold", 10, true);
+  myFont =createFont("Arial", 12, true);
+  myFontBold = createFont("Arial Bold", 12, true);
   
   //Scene Setup: Line-Us default to some device positions (A)
   LineUsPositions[0] = new PVector(SetupCenter.x - 0.25*(PondSize + PlateSize + 2.0*PondWidth)*scale, SetupCenter.y, 0);  //Line-Us 1 position
@@ -154,11 +157,11 @@ void SetEs() {
 
 //set digital twins target F's. Reads four F's from configuration file, row: ConfID
 void PrepareFs() {
-  if (FileLoaded==true) { //use positions.cvs and current Conf. ID.
+  if (FileLoaded==true) { //use positions.cvs and current Conf. ID (default: 0)
     for (int i=0; i<4; i++) {
-      LineUsFs[i] = new PVector(SetupCenter.x + scale*PosTable.getFloat(ConfID, 2*i), SetupCenter.y + scale*PosTable.getFloat(ConfID, 2*i+1), 0);
+      LineUsFs[i] = new PVector(SetupCenter.x + ConfScale*scale*PosTable.getFloat(ConfID, 2*i), SetupCenter.y + ConfScale*scale*PosTable.getFloat(ConfID, 2*i+1), 0);
     }
-  } else {
+  } else { //some resonable default values
     LineUsFs[0] = new PVector(SetupCenter.x - 0.25*PondSize*scale, SetupCenter.y, 0); //initial Device 1 F coords
     LineUsFs[1] = new PVector(SetupCenter.x, SetupCenter.y - 0.25*PondSize*scale, 0); //initial Device 2 F coords
     LineUsFs[2] = new PVector(SetupCenter.x + 0.25*PondSize*scale, SetupCenter.y, 0); //initial Device 3 F coords
@@ -172,28 +175,35 @@ void draw() {
   //create grid lines in the backgorund (10mm spacing)
   stroke(240);
   for(float x=-height/(2*scale); x<0.95*height/(2*scale); x=x+10){
-    line(SetupCenter.x + x*scale, 0, SetupCenter.x + x*scale, height);                       //vertical lines
+    line(SetupCenter.x + x*scale, 0, SetupCenter.x + x*scale, height);                            //vertical lines
     line(0, SetupCenter.y + x*scale, SetupCenter.x + 0.95*height/2, SetupCenter.y + x*scale);     //horizontal lines
   }
   strokeWeight(3); line(0,SetupCenter.y, SetupCenter.x + height/2,SetupCenter.y); line(SetupCenter.x,0, SetupCenter.x,height);
   
-  //show ds
+  //display ds & dx
+  fill(0);
   textAlign(LEFT, CENTER); text("move step size: " + nf(ds,1,0), 10, 10);
-  textAlign(LEFT, CENTER); text("step size: " + nf(dx,1,1), 10, 20);
+  textAlign(LEFT, CENTER); text("step size: " + nf(dx,1,1), 10, 25);
   
   //draw pond / canvas / mounting plate
   strokeWeight(1); stroke(0); fill(color(0,155,255,50)); rectMode(CENTER);
-  rect(SetupCenter.x,SetupCenter.y, PondSize*scale,PondSize*scale);
-  rect(SetupCenter.x,SetupCenter.y, (PondSize+2*PondWidth)*scale,(PondSize+2*PondWidth)*scale);
-  rect(SetupCenter.x,SetupCenter.y, PlateSize*scale,PlateSize*scale);
+  rect(SetupCenter.x, SetupCenter.y, PondSize*scale, PondSize*scale);
+  rect(SetupCenter.x, SetupCenter.y, (PondSize+2*PondWidth)*scale, (PondSize+2*PondWidth)*scale);
+  rect(SetupCenter.x, SetupCenter.y, PlateSize*scale, PlateSize*scale);
+  //draw saftey zone inside pond / canvas area
+  rectMode(CORNER); fill(BBDefaulColor); strokeWeight(0);
+  rect(SetupCenter.x - 0.5*PondSize*scale, SetupCenter.y - 0.5*PondSize*scale, PondSaftyWidth*scale, PondSize*scale);
+  rect(SetupCenter.x + (0.5*PondSize - PondSaftyWidth)*scale, SetupCenter.y - 0.5*PondSize*scale, PondSaftyWidth*scale, PondSize*scale);
+  rect(SetupCenter.x - (0.5*PondSize - PondSaftyWidth)*scale, SetupCenter.y - 0.5*PondSize*scale, (PondSize - 2*PondSaftyWidth)*scale, PondSaftyWidth*scale);
+  rect(SetupCenter.x - (0.5*PondSize - PondSaftyWidth)*scale, SetupCenter.y + (0.5*PondSize - PondSaftyWidth)*scale, (PondSize - 2*PondSaftyWidth)*scale, PondSaftyWidth*scale);
+  rectMode(CENTER);
   
-  //draw global coord. system
+  //draw global coord. system in upper left corner
   strokeWeight(1);
   stroke(265,0,0); //local x-axis is red
   line(0, 1, 0 + 50, 1);
   stroke(0,0,255); //local y-axis is blue
   line(1, 0, 1, 0 + 50);
-  
   
   //draw global coord. system centered on S
   stroke(265,0,0); //local x-axis is red
@@ -253,21 +263,25 @@ void draw() {
 void drawTable() {
   if (FileLoaded==true) {
     float TableYPos = SetupCenter.y - 0.25*(PondSize+PlateSize+PondWidth)*scale;
-    float TableXPos = height + 15;
-    float TableLineSpacing = 15;
-    float TableColumnSpacing = (width-height)/10;
+    float TableXPos = height + 45;
+    float TableLineSpacing = 18;
+    float TableColumnSpacing = (width-height)/12;
   
-    textFont(myFontBold); fill(0); textAlign(RIGHT, CENTER); int j=0; 
+    textFont(myFontBold); fill(0); textAlign(RIGHT, CENTER); int j=0; strokeWeight(1);
     for (int i=0; i<8; i++) { //write table column headers
       fill(255*int(i%2==0), 0, 255*int(i%2==1));
       text(PosTable.getColumnTitle(i), TableXPos + (i+2)*TableColumnSpacing, TableYPos - TableLineSpacing);
       if (i%2==0) {           //vertical lines
         stroke(0);
-        line(TableXPos + (i+1.1)*TableColumnSpacing, TableYPos - 1.2*TableLineSpacing, TableXPos + (i+1.1)*TableColumnSpacing, TableYPos + TableLineSpacing*(3*PosTable.getRowCount()) - 0.5*TableLineSpacing);
+        line(TableXPos + (i+1.1)*TableColumnSpacing, TableYPos - 1.2*TableLineSpacing, TableXPos + (i+1.1)*TableColumnSpacing, TableYPos + TableLineSpacing*(4*PosTable.getRowCount()) - 0.5*TableLineSpacing);
       }
     }
-    for (int i=0; i<PosTable.getRowCount(); i++) { //horizontal lines
-      line(TableXPos - 15, TableYPos + 3*i*TableLineSpacing - 0.45*TableLineSpacing, TableXPos + 9*TableColumnSpacing, TableYPos + 3*i*TableLineSpacing - 0.45*TableLineSpacing);
+    //extra vertical line for config. mini previews
+    fill(0); text("scale " + nf(ConfScale,1,1), TableXPos + 10.4*TableColumnSpacing, TableYPos - TableLineSpacing);
+    line(TableXPos + 9.1*TableColumnSpacing, TableYPos - 1.2*TableLineSpacing, TableXPos + 9.1*TableColumnSpacing, TableYPos + TableLineSpacing*(4*PosTable.getRowCount()) - 0.5*TableLineSpacing);
+    //horizontal table lines
+    for (int i=0; i<PosTable.getRowCount(); i++) {
+      line(TableXPos - 35, TableYPos + 4*i*TableLineSpacing - 0.45*TableLineSpacing, TableXPos + 10.5*TableColumnSpacing, TableYPos + 4*i*TableLineSpacing - 0.45*TableLineSpacing);
     }
     
     for (TableRow row : PosTable.rows()) {
@@ -277,25 +291,35 @@ void drawTable() {
         fill(0);       //black
       }
       textFont(myFontBold); textAlign(RIGHT, CENTER); //write table row headers
-      text("Conf " + str(j+1) + ", F [mm]:", TableXPos + 0.9*TableColumnSpacing, TableYPos + 3*j*TableLineSpacing);
-      text("curr. E [px]:", TableXPos + 0.9*TableColumnSpacing, TableYPos + (3*j+1)*TableLineSpacing);
-      text("loc. E [u]:", TableXPos + 0.9*TableColumnSpacing, TableYPos + (3*j+2)*TableLineSpacing);
+      text("Conf " + str(j+1) + ", F [mm]:", TableXPos + 0.9*TableColumnSpacing, TableYPos + 4*j*TableLineSpacing);
+      text("curr. F [mm]:", TableXPos + 0.9*TableColumnSpacing, TableYPos + (4*j+1)*TableLineSpacing);
+      text("curr. E [px]:", TableXPos + 0.9*TableColumnSpacing, TableYPos + (4*j+2)*TableLineSpacing);
+      text("loc. E [u]:", TableXPos + 0.9*TableColumnSpacing, TableYPos + (4*j+3)*TableLineSpacing);
       textFont(myFont);
       for (int i=0; i<8; i++) { //write table rows
-        float v = row.getFloat(i);
-        String Ei; String Eloci;
+        float v = row.getFloat(i); //show all rows from table data
+        String Ei; String Fi; String Eloci;
         if (j==ConfID) {
+          PVector FVec = LineUs[floor(i/2)].getLineUsF(); //show live: actual target F vector
+          Fi = ((i%2==0) ? nf((FVec.x - SetupCenter.x)/scale,1,1) : nf((FVec.y - SetupCenter.y)/scale,1,1));
           PVector EofF = LineUs[floor(i/2)].getLineUsE();
-          Ei = ((i%2==0) ? nf(EofF.x - SetupCenter.x,1,1) : nf(EofF.y - SetupCenter.y,1,1));
+          Ei = ((i%2==0) ? nf(EofF.x,1,1) : nf(EofF.y,1,1));
           PVector Elocal = LineUs[floor(i/2)].getLineUsEloc();
           Eloci = ((i%2==0) ? nf(int(Elocal.x),1,0) : nf(int(Elocal.y),1,0));
         } else {
           Ei = "";
+          Fi = "";
           Eloci="";
         }
-        text(nf(v,1,1), TableXPos + (i+2)*TableColumnSpacing, TableYPos + 3*j*TableLineSpacing);
-        text(Ei, TableXPos + (i+2)*TableColumnSpacing, TableYPos + (3*j+1)*TableLineSpacing);
-        text(Eloci, TableXPos + (i+2)*TableColumnSpacing, TableYPos + (3*j+2)*TableLineSpacing);
+        text(nf(v,1,1), TableXPos + (i+2)*TableColumnSpacing, TableYPos + 4*j*TableLineSpacing);
+        text(Fi, TableXPos + (i+2)*TableColumnSpacing, TableYPos + (4*j+1)*TableLineSpacing);
+        text(Ei, TableXPos + (i+2)*TableColumnSpacing, TableYPos + (4*j+2)*TableLineSpacing);
+        text(Eloci, TableXPos + (i+2)*TableColumnSpacing, TableYPos + (4*j+3)*TableLineSpacing);
+      }
+      for (int i =0; i<4; i++) { //draw mini configuration previews
+        float minix = row.getFloat(2*i); float miniy = row.getFloat(2*i+1);
+        fill(FColor); strokeWeight(1);
+        ellipse(TableXPos + 9.75*TableColumnSpacing + minix*ConfPreviewScale, TableYPos + (4*j+1.5)*TableLineSpacing + miniy*ConfPreviewScale, JointRadius,JointRadius);
       }
       j++;
     }
@@ -307,12 +331,12 @@ class LineUsDigital {
   int LineUsID;                             //ID of this Line-Us device
   PVector LineUsPos;                        //position of Line-Us device (A)
   PVector LineUsE;                          //Position of Line-Us device's Pen holder (E)
-  PVector LineUsEloc;                       //Position of Line-Us device's Pen holder (E) in Devices' coordinate system
+  PVector LineUsEloc;                       //Position of Line-Us device's Pen holder (E) in devices' coordinate system
   int LineUsElocZ;                          //stored z-coordinate
   PVector LineUsF;                          //Position of Line-Us device's extension point (F)
   float LineUsOrientation;                  //Orientation of Line-Us device (angle relative to horizontal)
   PVector[] Points = new PVector[6];        //Array that can hold 6 PVectors: D, A, B, C, E=(x,y), F
-  PShape[] BoundingBoxes = new PShape[6];   //Array that can hold 5 PShapes (the bounding boxes). Each vertex (4 per PShape) of a shape is a PVector. 1 extra BB (pen holder)
+  PShape[] BoundingBoxes = new PShape[8];   //Array that can hold 6 PShapes (the bounding boxes). Each vertex (4 per PShape) of a shape is a PVector. 3 extra BB (pen holder)
   boolean IsActive;                         //boolean variable storing if this Line-Us device is the active one
   boolean ValidPosition;                    //boolean variable signifying if position is a valid one (no bb collision, E&F inside pond/drawing area)
   
@@ -331,7 +355,9 @@ class LineUsDigital {
     for(int i=0; i<BoundingBoxes.length; i++){
       BoundingBoxes[i] = createShape();
       BoundingBoxes[i].beginShape();
-        BoundingBoxes[i].vertex(0,0); BoundingBoxes[i].vertex(0,0); BoundingBoxes[i].vertex(0,0); BoundingBoxes[i].vertex(0,0);
+      for (int j=0; j<bbv[i]; j++) {
+        BoundingBoxes[i].vertex(0,0);
+      }
       BoundingBoxes[i].endShape(CLOSE);
       BoundingBoxes[i].setStroke(false); 
       BoundingBoxes[i].setFill(BBDefaulColor);
@@ -347,8 +373,7 @@ class LineUsDigital {
   void setLineUsE(PVector setPos) {
     LineUsE.set(setPos);
     if ((LineUsConnected[LineUsID] == true) && (ValidPosition==true)) {
-      PVector Elocal = LineUs[LineUsID].getLineUsEloc(); //get z-coordinate as well
-      //print("x: " + str(Elocal.x) + ", y: " + str(Elocal.y) + ", z: " + str(Elocal.z) + "\n");
+      PVector Elocal = LineUs[LineUsID].getLineUsEloc();
       LineUsDevice[LineUsID].g01(int(Elocal.x), int(Elocal.y), int(Elocal.z)); delay(DefaultDelay);
     }
   }
@@ -374,8 +399,9 @@ class LineUsDigital {
     return LineUsEloc;
   }
   
+  //.z component of PVector LineUsEloc
   void setLineUsElocZ(int targetZ) {
-    LineUsElocZ = targetZ; //.z component of PVector LineUsEloc (derived from E and A in update() routine)
+    LineUsElocZ = targetZ; //LineUsEloc.z is set to this value at the end of .update() routine
   }
   
   //set PVector of this Line-Us device's Point E, inferred from E in device's own (rotated) coordinate system
@@ -434,65 +460,85 @@ class LineUsDigital {
     }
     
     //calculate arm points from Line-Us position = A and (x,y)=E
-    Points = getArmCoords(LineUsPos, LineUsE.x, LineUsE.y, scale*a, scale*b, scale*e);
-    //Points = getArmCoordsSE(LineUsPos, radians(135), radians(45), scale*a, scale*b, scale*e);
+    Points = getArmCoords(LineUsPos, LineUsE, scale*a, scale*b, scale*e);
     LineUsE = Points[4]; //update E for this object
     LineUsF = Points[5]; //get precise & consistent F from (A,E)
-    
-    //create bounding boxes (width 2w) around line-segments connecting new arm points {D, A, B, C, E, F}
-    for(int i=0; i<BoundingBoxes.length-1; i++){
-      PVector uAmB = PVector.sub(Points[i], Points[i+1]); uAmB.normalize(); //unit vector along P1-P2 (here called A & B)
-      PVector unAmB = zVec.cross(uAmB);                                     //unit vector normal to P1-P2
-      BoundingBoxes[i].setVertex(0, Points[i].x + wi[i]*(uAmB.x - unAmB.x), Points[i].y + wi[i]*(uAmB.y - unAmB.y));
-      BoundingBoxes[i].setVertex(1, Points[i].x + wi[i]*(uAmB.x + unAmB.x), Points[i].y + wi[i]*(uAmB.y + unAmB.y));
-      BoundingBoxes[i].setVertex(2, Points[i+1].x - wi[i]*(uAmB.x - unAmB.x), Points[i+1].y - wi[i]*(uAmB.y - unAmB.y));
-      BoundingBoxes[i].setVertex(3, Points[i+1].x - wi[i]*(uAmB.x + unAmB.x), Points[i+1].y - wi[i]*(uAmB.y + unAmB.y));
-    }
-    //extra bounding box for pen-holder around E=Points[4]
-      PVector uAmB = PVector.sub(Points[4], Points[3]); uAmB.normalize();  //unit vector along E-C
-      PVector unAmB = zVec.cross(uAmB);                                    //unit vector normal to E-C
-      BoundingBoxes[5].setVertex(0, Points[4].x + wi[5]*(-uAmB.x + unAmB.x), Points[4].y + wi[5]*(-uAmB.y + unAmB.y));
-      BoundingBoxes[5].setVertex(1, Points[4].x + wi[5]*(2*uAmB.x + unAmB.x), Points[4].y + wi[5]*(2*uAmB.y + unAmB.y));
-      BoundingBoxes[5].setVertex(2, Points[4].x + wi[5]*(2*uAmB.x - unAmB.x), Points[4].y + wi[5]*(2*uAmB.y - unAmB.y));
-      BoundingBoxes[5].setVertex(3, Points[4].x + wi[5]*(-uAmB.x - unAmB.x), Points[4].y + wi[5]*(-uAmB.y - unAmB.y));
     
     //check if F & E are inside
     boolean RodOnCanvasQ = RodOnCanvas(Points[4], Points[5]);
     
-    //collision test of this Line-Us with all other devices if there are more than 1
     boolean intersect = false;
-    if(LineUs.length > 1) {
-      for(int i=0; i<BoundingBoxes.length; i++) { //go through all bounding boxes i of this device
-        boolean intersecti = false;
-        for(int k=0; k<LineUs.length; k++){ //go through all other LineUsDevices
-          if (k != LineUsID) {
-            for(int j=0; j<BoundingBoxes.length; j++){ //go through bounding boxes of kth Line-Us device
-              boolean intersectij = intersects(LineUs[k].getBoundingBox(j), BoundingBoxes[i]); //i-th bounding box intersects j-th bounding box of k-th Line-Us?
-              intersecti = intersecti || intersectij; //i-th bounding box of this Line-Us intersects with any other Line-Us?
-              if (intersectij == true) {
-                LineUs[k].setBoundigBoxColor(j, BBIntersectColor);
-              } else {
-                LineUs[k].setBoundigBoxColor(j, BBDefaulColor);
+    if (ToggleBBCD==true) {
+      //create 5 bounding boxes (width 2w) around line-segments connecting new arm points {D, A, B, C, E, F}
+      for(int i=0; i<5; i++){
+        PVector uAmB = PVector.sub(Points[i], Points[i+1]); uAmB.normalize(); //unit vector along P1-P2 (here called A & B)
+        PVector unAmB = zVec.cross(uAmB);                                     //unit vector normal to P1-P2
+        BoundingBoxes[i].setVertex(0, Points[i].x + wi[i]*(uAmB.x - unAmB.x), Points[i].y + wi[i]*(uAmB.y - unAmB.y));
+        BoundingBoxes[i].setVertex(1, Points[i].x + wi[i]*(uAmB.x + unAmB.x), Points[i].y + wi[i]*(uAmB.y + unAmB.y));
+        BoundingBoxes[i].setVertex(2, Points[i+1].x - wi[i]*(uAmB.x - unAmB.x), Points[i+1].y - wi[i]*(uAmB.y - unAmB.y));
+        BoundingBoxes[i].setVertex(3, Points[i+1].x - wi[i]*(uAmB.x + unAmB.x), Points[i+1].y - wi[i]*(uAmB.y + unAmB.y));
+      }
+      //extra bounding box (hexagon) for pen-holder around E=Points[4]
+        PVector uAmB = PVector.sub(Points[4], Points[3]); uAmB.normalize();  //unit vector along C-E
+        PVector unAmB = zVec.cross(uAmB);                                    //unit vector normal to C-E
+        PVector ShapeVertj = PVector.add(Points[4], PVector.add(PVector.mult(uAmB, wi[5]*sqrt(3)/2), PVector.mult(unAmB, -wi[5]/2)));
+        for (int j=0; j<6; j++) {
+          ShapeVertj = PVector.add(ShapeVertj, PVector.mult(unAmB, wi[5]));
+          BoundingBoxes[5].setVertex(j, ShapeVertj.x, ShapeVertj.y);
+          unAmB.rotate(radians(60.0));
+        }
+      //extra bounding box (rectangle) for screw attached to pen holder at E
+        float Screwz1 = 0.85;
+        float Screwz2 = 1.8;
+        BoundingBoxes[6].setVertex(0, Points[4].x + wi[6]*(Screwz1*uAmB.x + unAmB.x), Points[4].y + wi[6]*(Screwz1*uAmB.y + unAmB.y));
+        BoundingBoxes[6].setVertex(1, Points[4].x + wi[6]*(Screwz2*uAmB.x + unAmB.x), Points[4].y + wi[6]*(Screwz2*uAmB.y + unAmB.y));
+        BoundingBoxes[6].setVertex(2, Points[4].x + wi[6]*(Screwz2*uAmB.x - unAmB.x), Points[4].y + wi[6]*(Screwz2*uAmB.y - unAmB.y));
+        BoundingBoxes[6].setVertex(3, Points[4].x + wi[6]*(Screwz1*uAmB.x - unAmB.x), Points[4].y + wi[6]*(Screwz1*uAmB.y - unAmB.y));
+      //extra bounding box (hexagon) around F=Point[5]
+        uAmB = PVector.sub(Points[5], Points[4]); uAmB.normalize();  //unit vector along E-F
+        unAmB = zVec.cross(uAmB);                                    //unit vector normal to E-C
+        ShapeVertj = PVector.add(Points[5], PVector.add(PVector.mult(uAmB, wi[7]*sqrt(3)/2), PVector.mult(unAmB, -wi[7]/2)));
+        for (int j=0; j<6; j++) {
+          ShapeVertj = PVector.add(ShapeVertj, PVector.mult(unAmB, wi[7]));
+          BoundingBoxes[7].setVertex(j, ShapeVertj.x, ShapeVertj.y);
+          unAmB.rotate(radians(60.0));
+        }
+       
+      //collision test of this Line-Us with all other devices if there are more than 1
+      if(LineUs.length > 1) {
+        for(int i=0; i<BoundingBoxes.length; i++) { //go through all bounding boxes i of this device
+          boolean intersecti = false;
+          for(int k=0; k<LineUs.length; k++){ //go through all other LineUsDevices
+            if (k != LineUsID) {
+              for(int j=0; j<BoundingBoxes.length; j++){ //go through bounding boxes of kth Line-Us device
+                boolean intersectij = intersects(LineUs[k].getBoundingBox(j), BoundingBoxes[i]); //i-th bounding box intersects j-th bounding box of k-th Line-Us?
+                intersecti = intersecti || intersectij; //i-th bounding box of this Line-Us intersects with any other Line-Us?
+                if (intersectij == true) {
+                  LineUs[k].setBoundigBoxColor(j, BBIntersectColor);
+                } else {
+                  LineUs[k].setBoundigBoxColor(j, BBDefaulColor);
+                }
               }
             }
           }
-        }
-        intersect = intersect || intersecti; //Line-Us intersects with any other Line-Us?
-        if (intersecti == true) {
-          BoundingBoxes[i].setFill(BBIntersectColor);
-        } else {
-          BoundingBoxes[i].setFill(BBDefaulColor);
+          intersect = intersect || intersecti; //Line-Us intersects with any other Line-Us?
+          if (intersecti == true) {
+            BoundingBoxes[i].setFill(BBIntersectColor);
+          } else {
+            BoundingBoxes[i].setFill(BBDefaulColor);
+          }
         }
       }
-    }
+    } //end BB calculation & collision detection (in void update())
     
     //valid position if no intersection of BB as well as F&E in pond (/on canvas)
     ValidPosition = RodOnCanvasQ && (!intersect);
     
-    //check if update resulted in valid position | DOESNT WORK?
+    //check if update resulted in valid position. If not, set to last valid.
     if ((LineUsF.x != LineUsF.x) || (ValidPosition==false)) { //F is NaN, i.e. calc. failed, invalid positioning attempt //
       LineUsE.set(LineUsELastValid[LineUsID]);
-      Points = getArmCoords(LineUsPos, LineUsE.x, LineUsE.y, scale*a, scale*b, scale*e);
+      Points = getArmCoords(LineUsPos, LineUsE, scale*a, scale*b, scale*e);
+      LineUsF.set(Points[5]);
       GoToActive = false;
     } else {
       LineUsELastValid[LineUsID] = LineUsE;
@@ -502,12 +548,13 @@ class LineUsDigital {
     PVector LineUsElocTemp = PVector.mult(PVector.sub(LineUsE, LineUsPos), (1/scale)*(100/5)); //100 units per 5mm, LineUsE/scale in [mm], local coordinates centered on A=LineUsPos
     PVector CoordFrameXVec = new PVector(1,0);
       CoordFrameXVec.rotate(LineUsOrientation);
-      LineUsEloc.x = PVector.dot(LineUsElocTemp, CoordFrameXVec);
     PVector CoordFrameYVec = new PVector(0,1);
       CoordFrameYVec.rotate(LineUsOrientation);
-      LineUsEloc.y = PVector.dot(LineUsElocTemp, CoordFrameYVec);
+    LineUsEloc.x = PVector.dot(LineUsElocTemp, CoordFrameXVec);
+    LineUsEloc.y = PVector.dot(LineUsElocTemp, CoordFrameYVec);
     LineUsEloc.z = float(LineUsElocZ);
   }
+  //end void update()
   
   //Auxillary function: collision test of this Line-Us device with any PShape
   boolean CollisionTest(PShape TestShape) {
@@ -527,8 +574,10 @@ class LineUsDigital {
       rotate(LineUsOrientation);
       ellipse(0, - 0.5*LineUsLength*scale, LineUsWidth*scale/2, LineUsWidth*scale/2);
       rect(0, - 0.2*LineUsLength*scale, LineUsWidth*scale, LineUsLength*scale);
+      fill(0); textAlign(CENTER, CENTER);
+      text(str(LineUsElocZ), 0, - 0.5*LineUsLength*scale); //display z-Value in local coordinate system (0,1000)
+      textFont(myFont); fill(0); textAlign(CENTER, CENTER); textSize(30); text(str(LineUsID+1), 0, - 0.2*LineUsLength*scale); //Line-Us ID
     popMatrix();
-    textFont(myFont); fill(0); textAlign(CENTER, CENTER); textSize(30); text(str(LineUsID+1), LineUsPos.x, LineUsPos.y);
     
     //draw local coord. system
     strokeWeight(1);
@@ -546,18 +595,21 @@ class LineUsDigital {
     line(LineUsPos.x, LineUsPos.y, CoordFrameYVec.x, CoordFrameYVec.y);
     
     //draw arms (lines connecting points, bounding boxes, joints), connects segments like {D-A-B-C-E-F} 
-    stroke(0); //rectMode(CORNER);
+    stroke(0); strokeWeight(4);
     for(int i=0; i<Points.length; i++){
       if(i<Points.length-1) {
         line(Points[i].x, Points[i].y, Points[i+1].x, Points[i+1].y);
-        shape(BoundingBoxes[i]); //draw bounding box
       }
       fill(0); ellipse(Points[i].x, Points[i].y, JointRadius,JointRadius);
     }
-    shape(BoundingBoxes[5]); //draw extra pen holder bounding box
+    if (ToggleBBCD==true) {
+      for(int i=0; i<BoundingBoxes.length; i++){
+        shape(BoundingBoxes[i]);
+      }
+    }
     
     //draw interactive dragging discs
-    noStroke();
+    noStroke(); strokeWeight(2);
     if (IsActive==true) {
       fill(ActiveEColor); 
     } else {
@@ -571,9 +623,8 @@ class LineUsDigital {
       ellipse(LineUsPos.x,LineUsPos.y, CircRadius*2, CircRadius*2);
     }
     textFont(myFont); fill(255); textAlign(CENTER, CENTER); textSize(10);
-    text(str(LineUsElocZ), Points[4].x, Points[4].y); //display z-Value in local coordinate system (0,1000)
     
-    //draw rod positions F
+    //draw extension arm positions F
     fill(FColor); ellipse(Points[5].x, Points[5].y, JointRadius,JointRadius);
   }
 }
@@ -594,42 +645,12 @@ PVector getEfromF(PVector A, PVector E, PVector F) {
     N++;
   }
   
-  //Golden-section search (only works if circle around F is possible :/)
-  //float gr = (sqrt(5) + 1) / 2;
-  //float phia = -2*PI;
-  //float phib = 2*PI;
-  //float phic = phib - (phib - phia) / gr;
-  //float phid = phia + (phib - phia) / gr;
-  //while (abs(phic - phid) > eps) {
-  //  if (getEfromFfunc(A, F, phic) < getEfromFfunc(A, F, phid)) {
-  //    phib = phid;
-  //  } else {
-  //    phia = phic;
-  //  }
-  //  //We recompute both c and d here to avoid loss of precision which may lead to incorrect results or infinite loop
-  //  phic = phib - (phib - phia) / gr;
-  //  phid = phia + (phib - phia) / gr;
-  //}
-  //float phi = (phib + phia) / 2;
-  
-  //calculate E for root phi;
   return Echeckphi(F, phi);
 }
 
-int signum(float f) {
-  if (f > 0) return 1;
-  if (f < 0) return -1;
-  return 0;
-}
-
 float getEfromFfuncp(PVector A, PVector F, float phi) {
-  float dphi = 1E-5;
+  float dphi = 1E-3;
   return (getEfromFfunc(A, F, phi + dphi) - getEfromFfunc(A, F, phi - dphi)) / (2*dphi);
-}
-
-float getEfromFfuncpp(PVector A, PVector F, float phi) {
-  float dphi = 1E-5;
-  return (getEfromFfunc(A, F, phi + dphi) - 2*getEfromFfunc(A, F, phi) + getEfromFfunc(A, F, phi - dphi)) / (dphi*dphi);
 }
 
 //E testwise around F (angle phi relative to positive x-axis)
@@ -643,18 +664,18 @@ PVector Echeckphi(PVector F, float phi) {
 float getEfromFfunc(PVector A, PVector F, float phi) {
   PVector Echeck = Echeckphi(F, phi);
   PVector[] Pnts = new PVector[6];
-  Pnts = getArmCoords(A, Echeck.x, Echeck.y, a*scale, b*scale, e*scale); //Pnts[5] is F calculated for trial Echeck(x)
-  return PVector.dist(Pnts[5], F); //compare with target F to see if Echeck was the right one
+  Pnts = getArmCoords(A, Echeck, a*scale, b*scale, e*scale); //Pnts[5] is F calculated for trial Echeck(x)
+  return PVector.dist(Pnts[5], F);                           //compare with target F to see if Echeck was the right one
 }
 
 //Points = {D, A, B, C, E, F} for given A(origin), E=(x,y) and arm lengths a (long), b (short). Order chosen for easy plotting.
-PVector[] getArmCoords(PVector A, float x, float y, float a, float b, float e) {
+PVector[] getArmCoords(PVector A, PVector E, float a, float b, float e) {
   PVector[] Pnts = new PVector[6]; //= {D, A, B, C, E, F}, each a 3D vector
   
-  float c = sqrt(pow(x - A.x, 2)+pow(y - A.y, 2));
+  float c = sqrt(pow(E.x - A.x, 2)+pow(E.y - A.y, 2));
   float d = sqrt(a*a - c*c/4);
   Pnts[1] = new PVector(A.x, A.y, 0);                                                             //=A
-  Pnts[4] = new PVector(x, y, 0);                                                                 //=E
+  Pnts[4] = new PVector(E.x, E.y, 0);                                                             //=E
   PVector uEmA = PVector.sub(Pnts[4], Pnts[1]); uEmA.normalize();                                 //unit vector (E-A)/|E-A|
   PVector unEmA = zVec.cross(uEmA);                                                               //unit normal vector to (E-A)
   Pnts[0] = PVector.add(Pnts[1], PVector.add(PVector.mult(uEmA, c/2), PVector.mult(unEmA, d)));   //D = A + uEmA*(c/2) + unEmA*d
@@ -667,7 +688,7 @@ PVector[] getArmCoords(PVector A, float x, float y, float a, float b, float e) {
   return Pnts;
 }
 
-//Points = {D, A, B, C, E, F} for given A(origin), angles S & E and arm lengths a (long), b (short). Order chosen for easy plotting.
+//Points = {D, A, B, C, E, F} for given A(origin), angles S & E and arm lengths a (long), b (short). (currently not used)
 PVector[] getArmCoordsSE(PVector A, float S, float E, float a, float b, float e) {
   PVector[] Pnts = new PVector[6]; //= {D, A, B, C, E, F}, each a 3D vector
   PVector ux = new PVector(1, 0, 0);
@@ -698,38 +719,42 @@ boolean RodOnCanvas(PVector E, PVector F) {
 // OBB-OBB (oriented bounding box) collision detection (here: assumes equal number of vertices per PShape)
 // adopted from https://gamedev.stackexchange.com/questions/25397/obb-vs-obb-collision-detection
 boolean intersects(PShape shape1, PShape shape2) {
-  //define number of vertices
-  int NVert = shape1.getVertexCount(); 
-  int NVertm1 = NVert-1;
-  //get shape1 & shape2 Corners
-  PVector[] Corners1 = new PVector[4];
-  PVector[] Corners2 = new PVector[4];
-  for(int i = 0; i < NVert; i++) {
+  //define number of vertices (of shape1 and shape2) and get their Corners
+  int NVert1 = shape1.getVertexCount(); 
+  int NVert1m1 = NVert1 - 1;
+  PVector[] Corners1 = new PVector[NVert1];
+  for(int i = 0; i < NVert1; i++) {
     Corners1[i] = shape1.getVertex(i);
+  }
+  int NVert2 = shape2.getVertexCount(); 
+  int NVert2m1 = NVert2 - 1;
+  PVector[] Corners2 = new PVector[NVert2];
+  for(int i = 0; i < NVert2; i++) {
     Corners2[i] = shape2.getVertex(i);
   }
-  // Get the normals for shape1,
-  PVector[] normals = new PVector[NVert];
-  for(int i = 0; i < NVert; i++) {
-    PVector sidei = (i==NVertm1) ? PVector.sub(Corners1[NVertm1], Corners1[0]) : PVector.sub(Corners1[i+1], Corners1[i]);
-    normals[i] = zVec.cross(sidei); normals[i].normalize();
+  // Get the normals for shape1
+  PVector[] normals1 = new PVector[NVert1];
+  for(int i = 0; i < NVert1; i++) {
+    PVector sidei = (i==NVert1m1) ? PVector.sub(Corners1[NVert1m1], Corners1[0]) : PVector.sub(Corners1[i+1], Corners1[i]);
+    normals1[i] = zVec.cross(sidei); normals1[i].normalize();
   }
   //project all bounding boxes on normals of shape1
   float[] minmaxAlong1, minmaxAlong2 = new float[2];
-  for(int i = 0; i < NVert; i++) {
-    minmaxAlong1 = SATtest(normals[i], Corners1);
-    minmaxAlong2 = SATtest(normals[i], Corners2);
+  for(int i = 0; i < NVert1; i++) {
+    minmaxAlong1 = SATtest(normals1[i], Corners1);
+    minmaxAlong2 = SATtest(normals1[i], Corners2);
     if(!overlaps(minmaxAlong1, minmaxAlong2)) return false; // NO INTERSECTION
   }
-  // Get the normals for shape2,
-  for(int i = 0; i < NVert; i++) {
-    PVector sidei = (i==NVertm1) ? PVector.sub(Corners2[NVertm1], Corners2[0]) : PVector.sub(Corners2[i+1], Corners2[i]);
-    normals[i] = zVec.cross(sidei); normals[i].normalize();
+  // Get the normals for shape2
+  PVector[] normals2 = new PVector[NVert2];
+  for(int i = 0; i < NVert2; i++) {
+    PVector sidei = (i==NVert2m1) ? PVector.sub(Corners2[NVert2m1], Corners2[0]) : PVector.sub(Corners2[i+1], Corners2[i]);
+    normals2[i] = zVec.cross(sidei); normals2[i].normalize();
   }
   //project all bounding boxes on normals of shape2
-  for(int i = 0; i < NVert; i++) {
-    minmaxAlong1 = SATtest(normals[i], Corners1);
-    minmaxAlong2 = SATtest(normals[i], Corners2);
+  for(int i = 0; i < NVert2; i++) {
+    minmaxAlong1 = SATtest(normals2[i], Corners1);
+    minmaxAlong2 = SATtest(normals2[i], Corners2);
     if(!overlaps(minmaxAlong1, minmaxAlong2)) return false; // NO INTERSECTION
   }
   return true; // if overlap occurred in ALL AXES, then they do intersect
@@ -908,15 +933,15 @@ void keyPressed() {
       case('f'):
         DragMode=1;
         break;
+      case('w'):
+        ToggleBBCD = !ToggleBBCD;
+        break;
       case('e'):
         DragMode=0;
         break;
       case('a'):
         if (keyCONTROL == true) {
-          ConnectToLineUs(0);
-          ConnectToLineUs(1);
-          ConnectToLineUs(2);
-          ConnectToLineUs(3);
+          ConnectToLineUs(0); ConnectToLineUs(1); ConnectToLineUs(2); ConnectToLineUs(3);
         } else {  
           DragMode=2;
         }
@@ -930,8 +955,8 @@ void keyPressed() {
           LineUs[i].setLineUsEloc(Ehome);
           LineUs[i].setLineUsElocZ(int(Ehome.z));
           LineUsEs[i] = LineUs[i].getLineUsE();
-          SetEs();
         }
+        SetEs();
         break;
       case('+'):
         ConfID = ConfID +1;
@@ -944,10 +969,17 @@ void keyPressed() {
         ConfID = max(ConfID -1, 0);
         PrepareFs();
         break;
+      case('.'):
+        ConfScale = ConfScale + 0.1; //scale up
+        break;
+      case(','):
+        ConfScale = max(0, ConfScale - 0.1); //scale down
+        break;
       case('c'):
         keyC = true;
         break;
       case(ENTER):
+        PrepareFs();
         GoToActive = !GoToActive; //toggle move or no move towards target
         if (GoToActive == true) {
           Goj = 1;
