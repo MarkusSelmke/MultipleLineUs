@@ -29,7 +29,7 @@ Ctrl + Left / Right		: inc./dec. step size
 
 Enter				: start/cancel move to configuration
 
-+ / -					: go through configurations
+'+' / '-'					: go through configurations
 
 Ctrl + '1'-'4'			: select configuration 1, 2, 3, 4
 
